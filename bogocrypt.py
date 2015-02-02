@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 import os
 import sys
+import argparse
+from datetime import datetime, timedelta
 from cryptography.hazmat.backends import default_backend
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers import (
@@ -53,7 +55,9 @@ def encrypt(fn):
         f.write(b)
 
 def decrypt(fn):
+    maxint = get_maxint(KEY_SIZE)
     i = 1
+    t = datetime.now()
     while True:
         key = os.urandom(KEY_SIZE)
         b = bytearray()
@@ -81,7 +85,12 @@ def decrypt(fn):
                     sys.stdout.write('.')
                     sys.stdout.flush()
                 if i % 50000 == 0:
-                    print('')
+                    t2 = datetime.now()
+                    rate = 50000 / (t2 - t).total_seconds()
+                    remaining = seconds=(maxint - i) / rate
+                    ryear = remaining / 31557600.0
+                    print(' - {0:0.2f}/s, {1:0.2f} years'.format(rate, ryear))
+                    t = t2
             else:
                 print("Decrypted after %s tries" % i)
                 break
@@ -90,8 +99,19 @@ def decrypt(fn):
         
 
 def main():
-    # TODO: args / argparse
-    fn = 'test'
+    p = argparse.ArgumentParser(
+        description='Encrypt or decrypt a file')
+    p.add_argument('filename', metavar='filename')
+    args = p.parse_args()
+    fn = args.filename
+    if not (os.path.exists(fn) and os.path.isfile(fn)):
+        print("File does not exist or is non-encryptable")
+        exit(1)
+    try:
+        f = open(fn, 'ab')
+    except PermissionError:
+        print("Can not write to chosen file - check permissions")
+        exit(1)
 
     try:
         if str(open(fn, 'rb').read(len(MAGIC)), 'utf-8') != MAGIC:
