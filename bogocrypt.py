@@ -9,6 +9,10 @@ from cryptography.hazmat.primitives.ciphers import (
     Cipher, algorithms, modes
 )
 
+# File header
+# MAGIC (str, 9 bytes)
+# Key size (char, 1 byte)
+
 IV_SIZE = 12
 KEY_SIZE = 16
 TAG_SIZE = 16
@@ -19,22 +23,38 @@ MAGIC = 'bogocrypt'
 def get_maxint(byte_size):
     if byte_size <= 0:
         return 0
-    val = 0xf
+    val = 0xff
     for i in range(1, byte_size):
         val = (val << 8) + 0xff
     return val
 
 
+def get_keysize():
+    while True:
+        try:
+            keysize = int(input("Keysize (bytes): "))
+        except:
+            pass
+        else:
+            if 0 < keysize <= 256:
+                return keysize
+
+
+def round_16(num):
+    return ((num // 16) + 1) * 16
+
+
 def encrypt(fn):
-    key = os.urandom(KEY_SIZE)
+    keysize = get_keysize()
+    rounded = round_16(keysize)
+    key = (b'\x00' * (rounded - keysize)) + os.urandom(keysize)
     iv = int.from_bytes(os.urandom(IV_SIZE), 'little')
     max_iv = get_maxint(IV_SIZE)
-    b = bytearray(bytes(MAGIC, 'utf-8'))
+    b = bytearray(bytes(MAGIC, 'utf-8') + (keysize - 1).to_bytes(1, 'little'))
     rsize = CHUNK_SIZE
     with open(fn, 'rb') as f:
         d = f.read(rsize)
         while len(d) != 0:
-            print(d, len(d))
             tiv = iv.to_bytes(IV_SIZE, 'little')
             encryptor = Cipher(algorithms.AES(key),
                                modes.GCM(tiv),
@@ -55,20 +75,27 @@ def encrypt(fn):
         f.write(b)
 
 def decrypt(fn):
-    maxint = get_maxint(KEY_SIZE)
+    keysize = int.from_bytes(open(fn, 'rb').read(len(MAGIC) + 1)[-1:], 'little') + 1
+    print("KEYSIZE: %s" % keysize)
+    rounded = round_16(keysize)
+    maxint = get_maxint(keysize)
+    keyseed = int.from_bytes(os.urandom(keysize), 'little')
     i = 1
     t = datetime.now()
     while True:
-        key = os.urandom(KEY_SIZE)
+        key = (b'\x00' * (rounded - keysize)) +
+               keyseed.to_bytes(keysize, 'little')
         b = bytearray()
         rsize = IV_SIZE + TAG_SIZE + CHUNK_SIZE
         with open(fn, 'rb') as f:
+            # Throw away non-relevant data
+            f.read(len(MAGIC) + 1)
             d = f.read(rsize)
             try:
                 while len(d) != 0:
                     iv = d[:IV_SIZE]
                     tag = d[-TAG_SIZE:]
-                    d = d[IV_SIZE:TAG_SIZE]
+                    d = d[IV_SIZE:-TAG_SIZE]
                     decryptor = Cipher(
                         algorithms.AES(key),
                         modes.GCM(iv, tag),
@@ -81,6 +108,9 @@ def decrypt(fn):
 
             except InvalidTag:
                 i += 1
+                keyseed += 1
+                if keyseed > maxint:
+                    keyseed = 0
                 if i % 1000 == 0:
                     sys.stdout.write('.')
                     sys.stdout.flush()
@@ -88,8 +118,8 @@ def decrypt(fn):
                     t2 = datetime.now()
                     rate = 50000 / (t2 - t).total_seconds()
                     remaining = seconds=(maxint - i) / rate
-                    ryear = remaining / 31557600.0
-                    print(' - {0:0.2f}/s, {1:0.2f} years'.format(rate, ryear))
+                    rhour = remaining / 3600.0
+                    print(' - {0:0.2f}/s, {1:0.2f} hours'.format(rate, rhour))
                     t = t2
             else:
                 print("Decrypted after %s tries" % i)
@@ -120,6 +150,7 @@ def main():
         else:
             print("Magic string found - decrypting")
             decrypt(fn)
+    # If the bytes are arbitrary and can not be decoded to the MAGIC
     except UnicodeDecodeError:
         print("Magic string not found in file - encrypting")
         encrypt(fn)
